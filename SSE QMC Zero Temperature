@@ -40,11 +40,11 @@ function initializeProbabilityTables!()
     return P_c1, P_c2
 end
 
-function flipCluster!(vertex, direction, legs_encountered, bonds_encountered, flip)
+function flipCluster!(α_l, operators, vertex, direction, legs_encountered, bonds_encountered, flip)
     p = vertex.position
     if vertex.operator_type == 2
         if (direction == 3) && flip
-            alpha_l[vertex.site] = !alpha_l[vertex.site]
+            α_l[vertex.site] = !α_l[vertex.site]
         end
     elseif vertex.operator_type == 0
         leg = (p, direction)
@@ -59,17 +59,17 @@ function flipCluster!(vertex, direction, legs_encountered, bonds_encountered, fl
     elseif vertex.operator_type == 1
         if !in(p, bonds_encountered)
             push!(bonds_encountered, p)
-            flipCluster!(vertex.vertices_out[1], 3, legs_encountered, bonds_encountered, flip)
-            flipCluster!(vertex.vertices_out[2], 3, legs_encountered, bonds_encountered, flip)
-            flipCluster!(vertex.vertices_out[3], 1, legs_encountered, bonds_encountered, flip)
-            flipCluster!(vertex.vertices_out[4], 1, legs_encountered, bonds_encountered, flip)
+            flipCluster!(α_l, operators, vertex.vertices_out[1], 3, legs_encountered, bonds_encountered, flip)
+            flipCluster!(α_l, operators, vertex.vertices_out[2], 3, legs_encountered, bonds_encountered, flip)
+            flipCluster!(α_l, operators, vertex.vertices_out[3], 1, legs_encountered, bonds_encountered, flip)
+            flipCluster!(α_l, operators, vertex.vertices_out[4], 1, legs_encountered, bonds_encountered, flip)
         end
     end
 end
 
 
 # Flips the spins of clusters under the Swendsen-Wang algorithm
-function updateClusters(vertex_list, leg_set)
+function updateClusters!(α_l, operators, vertex_list, leg_set)
     legs_encountered = Set{Any}()
     bonds_encountered = Set{Int64}() # Set of positions of bonds encountered
     for leg in leg_set
@@ -84,13 +84,13 @@ function updateClusters(vertex_list, leg_set)
 
             direction = leg[2]
             next_vertex = vertex_list[p].vertices_out[direction]
-            flipCluster!(next_vertex, 4 - direction, legs_encountered, bonds_encountered, flip)
+            flipCluster!(α_l, operators, next_vertex, 4 - direction, legs_encountered, bonds_encountered, flip)
         end
     end
 end
 
-function update()
-    alpha = deepcopy(alpha_l)
+function update!(α_l, operators)
+    α = deepcopy(α_l)
 
     last_vertex = Array{Any}(N)
     for i in 1:N
@@ -105,7 +105,7 @@ function update()
         # Local/diagonal updates
         if operators[p][1] == -1
             site = operators[p][2]
-            alpha[site] = !alpha[site] # flip operator
+            α[site] = !α[site] # flip operator
         else
             while true
                 i = searchsortedfirst(P_c1, rand())
@@ -115,10 +115,10 @@ function update()
                     operators[p] = (0, i)
                     break
                 else
-                    if (J[i,j] > 0) && (alpha[i] == !alpha[j]) # Antiferromagnetic bond operator
+                    if (J[i,j] > 0) && (α[i] == !α[j]) # Antiferromagnetic bond operator
                         operators[p] = (i, j)
                         break
-                    elseif (J[i,j] < 0) && (alpha[i] == alpha[j]) # Ferromagnetic bond operator
+                    elseif (J[i,j] < 0) && (α[i] == α[j]) # Ferromagnetic bond operator
                         operators[p] = (i, j)
                         break
                     end
@@ -164,11 +164,11 @@ function update()
             last_vertex[site2] = vertex
         end
     end
-    updateClusters(vertex_list, leg_set) # Off-diagonal updates
+    updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
 end
 
-function measure(j)
-    α = deepcopy(alpha_l)
+function measure(α_l, operators, i)
+    α = deepcopy(α_l)
     for p in 1:m
         if operators[p][1] == -1
             site = operators[p][2]
@@ -176,7 +176,7 @@ function measure(j)
         end
     end
 
-    if α[1] == α[j]
+    if α[1] == α[i]
         return 1
     else
         return -1
@@ -184,33 +184,34 @@ function measure(j)
 end
 
 function check_validity()
-    alpha = deepcopy(alpha_l)
+    α = deepcopy(α_l)
     for p in 1:2m
         if operators[p][1] == -1
             site = operators[p][2]
-            alpha[site] = !alpha[site] # flip operator
+            α[site] = !α[site] # flip operator
         elseif operators[p][1] > 0
             site1 = operators[p][1]
             site2 = operators[p][2]
 
-            if (J[site1, site2] > 0) && (alpha[site1] == alpha[site2])
-                alpha1 = alpha[site1]
-                alpha2 = alpha[site2]
-                error("($p) AF Bond ($site1, $site2) is acting on same spin ($alpha1, $alpha2)")
-            elseif (J[site1, site2] > 0) && (alpha[site1] == alpha[site2])
-                alpha1 = alpha[site1]
-                alpha2 = alpha[site2]
-                error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($alpha1, $alpha2)")
+            if (J[site1, site2] > 0) && (α[site1] == α[site2])
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) AF Bond ($site1, $site2) is acting on same spin ($α1, $α2)")
+            elseif (J[site1, site2] > 0) && (α[site1] == α[site2])
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($α1, $α2)")
             elseif (J[site1, site2] == 0)
-                alpha1 = alpha[site1]
-                alpha2 = alpha[site2]
-                error("($p) Bond ($site1, $site2) exists on non-interacting spins ($alpha1, $alpha2)")
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) Bond ($site1, $site2) exists on non-interacting spins ($α1, $α2)")
             end
         end
     end
 end
 
-steps = 10000
+steps = 1000
+delay = steps/10
 
 N = 10
 m = 100
@@ -222,19 +223,34 @@ for i in 1:N - 1
 end
 h = ones(Float64, N)
 
-alpha_l = rand(Bool,N)
-operators = Array{Tuple{Int64, Int64}}(2m)
-fill!(operators, (-1,1))
-
-j = 2
-val = 0.0
+avg = Array{Any}(N-1)
+err = Array{Any}(N-1)
+M = 30
 
 P_c1, P_c2 = initializeProbabilityTables!()
 
-for k in 1:steps
-    update()
-    val += measure(j)
-    check_validity()
+for i in 2:N
+    println("Correlator of site 1 with site $i")
+    temp = zeros(M)
+    for j in 1:M
+        println("Iteration: $j")
+        α_l = rand(Bool,N)
+        operators = Array{Tuple{Int64, Int64}}(2m)
+        fill!(operators, (-1,1))
+
+        for k in 1:steps
+            update!(α_l, operators)
+            # check_validity()
+            if (k > delay)
+                temp[j] += measure(α_l, operators, i)
+            end
+        end
+        temp[j] /= (steps - delay)
+    end
+    avg[i - 1] = mean(temp)
+    err[i - 1] = std(temp)/M
+    println(avg[i - 1])
+    println(err[i - 1])
 end
 
-println(val/steps)
+# println(val/(steps - delay))

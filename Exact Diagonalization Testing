@@ -30,4 +30,16 @@ end
 
 evals,evec = eigs(H, nev=1, which=:SR)
 
-println(evec' * op  * evec)
+exact = Array{Any}(9)
+temp = deepcopy(I_list)
+temp[1] = Z1
+temp[2] = Z1
+op = sparse(kron(temp...))
+exact[1] = (evec' * op  * evec)[1]
+
+for i in 3:N
+    temp[i-1] = I1
+    temp[i] = Z1
+    op = sparse(kron(temp...))
+    exact[i - 1] = (evec' * op  * evec)[1]
+end
