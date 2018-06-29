@@ -1,0 +1,240 @@
+# Stochastic Series Expansion (SSE) Quantum Monte Carlo (QMC) simulation for the
+# T = 0 Transverse-Field Ising Model (TFIM)
+
+
+mutable struct Vertex
+    position # p propagation position in imaginary time
+    operator_type # 0 = site, 1 = bond, 2 = state (not operator), 3 = null
+    site # Included to flip states
+    vertices_out # [left, left1, right, right1]
+end
+
+null_vertex = Vertex(0, 3, 0, [nothing, nothing, nothing, nothing])
+
+function initializeProbabilityTables!()
+    P_c1 = Array{Float64}(N)
+    P_c2 = Array{Float64}(N,N)
+
+    M = 2 * abs.(J)
+    for i in 1:N
+        M[i,i] = h[i]
+    end
+
+    P = sum(M,2)
+    s = 0.0
+    for i in 1:N
+        s += P[i]
+        P_c1[i] = s
+    end
+    P_c1 /= s
+
+    for i in 1:N
+        s = 0.0
+        for j in 1:N
+            s += M[i,j]
+            P_c2[i,j] = s
+        end
+        P_c2[i,:] /= s
+    end
+
+    return P_c1, P_c2
+end
+
+function flipCluster!(vertex, direction, legs_encountered, bonds_encountered, flip)
+    p = vertex.position
+    if vertex.operator_type == 2
+        if (direction == 3) && flip
+            alpha_l[vertex.site] = !alpha_l[vertex.site]
+        end
+    elseif vertex.operator_type == 0
+        leg = (p, direction)
+        if in(leg, legs_encountered)
+            return
+        end
+        push!(legs_encountered, leg)
+
+        if flip
+            operators[p] = (-(operators[p][1] + 1), operators[p][2])
+        end
+    elseif vertex.operator_type == 1
+        if !in(p, bonds_encountered)
+            push!(bonds_encountered, p)
+            flipCluster!(vertex.vertices_out[1], 3, legs_encountered, bonds_encountered, flip)
+            flipCluster!(vertex.vertices_out[2], 3, legs_encountered, bonds_encountered, flip)
+            flipCluster!(vertex.vertices_out[3], 1, legs_encountered, bonds_encountered, flip)
+            flipCluster!(vertex.vertices_out[4], 1, legs_encountered, bonds_encountered, flip)
+        end
+    end
+end
+
+
+# Flips the spins of clusters under the Swendsen-Wang algorithm
+function updateClusters(vertex_list, leg_set)
+    legs_encountered = Set{Any}()
+    bonds_encountered = Set{Int64}() # Set of positions of bonds encountered
+    for leg in leg_set
+        if !in(leg, legs_encountered)
+            push!(legs_encountered, leg)
+
+            p = leg[1]
+            flip = rand(Bool)
+            if flip
+                operators[p] = (-(operators[p][1] + 1), operators[p][2])
+            end
+
+            direction = leg[2]
+            next_vertex = vertex_list[p].vertices_out[direction]
+            flipCluster!(next_vertex, 4 - direction, legs_encountered, bonds_encountered, flip)
+        end
+    end
+end
+
+function update()
+    alpha = deepcopy(alpha_l)
+
+    last_vertex = Array{Any}(N)
+    for i in 1:N
+        last_vertex[i] = Vertex(0, 2, i, [null_vertex, null_vertex, null_vertex, null_vertex])
+    end
+
+    vertex_list = Array{Any}(2m)
+    leg_set = Set{Tuple}()
+
+    # Propagate alpha forward in imaginary time
+    for p in 1:2m
+        # Local/diagonal updates
+        if operators[p][1] == -1
+            site = operators[p][2]
+            alpha[site] = !alpha[site] # flip operator
+        else
+            while true
+                i = searchsortedfirst(P_c1, rand())
+                j = searchsortedfirst(P_c2[i,:], rand())
+
+                if (i == j) # Adding diagonal site operator
+                    operators[p] = (0, i)
+                    break
+                else
+                    if (J[i,j] > 0) && (alpha[i] == !alpha[j]) # Antiferromagnetic bond operator
+                        operators[p] = (i, j)
+                        break
+                    elseif (J[i,j] < 0) && (alpha[i] == alpha[j]) # Ferromagnetic bond operator
+                        operators[p] = (i, j)
+                        break
+                    end
+                end
+            end
+        end
+
+        # Cluster building
+        if operators[p][1] <= 0 # Site operator encountered
+            site = operators[p][2]
+            vertex = Vertex(p, 0, site, [last_vertex[site], null_vertex, null_vertex, null_vertex])
+            vertex_list[p] = vertex
+            push!(leg_set, (p, 1)) # Left leg of vertex
+            push!(leg_set, (p, 3)) # Right leg of vertex
+
+            # Update previous vertex
+            if last_vertex[site].vertices_out[3] == null_vertex
+                last_vertex[site].vertices_out[3] = vertex
+            else
+                last_vertex[site].vertices_out[4] = vertex
+            end
+            last_vertex[site] = vertex
+        else # Bond operator encountered
+            site1 = operators[p][1]
+            site2 = operators[p][2]
+            vertex = Vertex(p, 1, 0, [last_vertex[site1], last_vertex[site2], null_vertex, null_vertex])
+            vertex_list[p] = vertex
+
+            # Update previous vertices
+            p1 = last_vertex[site1].position
+            p2 = last_vertex[site2].position
+            if last_vertex[site1].vertices_out[3] == null_vertex
+                last_vertex[site1].vertices_out[3] = vertex
+            else
+                last_vertex[site1].vertices_out[4] = vertex
+            end
+            if last_vertex[site2].vertices_out[3] == null_vertex
+                last_vertex[site2].vertices_out[3] = vertex
+            else
+                last_vertex[site2].vertices_out[4] = vertex
+            end
+            last_vertex[site1] = vertex
+            last_vertex[site2] = vertex
+        end
+    end
+    updateClusters(vertex_list, leg_set) # Off-diagonal updates
+end
+
+function measure(j)
+    α = deepcopy(alpha_l)
+    for p in 1:m
+        if operators[p][1] == -1
+            site = operators[p][2]
+            α[site] = !α[site]
+        end
+    end
+
+    if α[1] == α[j]
+        return 1
+    else
+        return -1
+    end
+end
+
+function check_validity()
+    alpha = deepcopy(alpha_l)
+    for p in 1:2m
+        if operators[p][1] == -1
+            site = operators[p][2]
+            alpha[site] = !alpha[site] # flip operator
+        elseif operators[p][1] > 0
+            site1 = operators[p][1]
+            site2 = operators[p][2]
+
+            if (J[site1, site2] > 0) && (alpha[site1] == alpha[site2])
+                alpha1 = alpha[site1]
+                alpha2 = alpha[site2]
+                error("($p) AF Bond ($site1, $site2) is acting on same spin ($alpha1, $alpha2)")
+            elseif (J[site1, site2] > 0) && (alpha[site1] == alpha[site2])
+                alpha1 = alpha[site1]
+                alpha2 = alpha[site2]
+                error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($alpha1, $alpha2)")
+            elseif (J[site1, site2] == 0)
+                alpha1 = alpha[site1]
+                alpha2 = alpha[site2]
+                error("($p) Bond ($site1, $site2) exists on non-interacting spins ($alpha1, $alpha2)")
+            end
+        end
+    end
+end
+
+steps = 10000
+
+N = 10
+m = 100
+
+J = zeros(Float64, N, N)
+for i in 1:N - 1
+    J[i,i+1] = 1
+    J[i+1,i] = 1
+end
+h = ones(Float64, N)
+
+alpha_l = rand(Bool,N)
+operators = Array{Tuple{Int64, Int64}}(2m)
+fill!(operators, (-1,1))
+
+j = 2
+val = 0.0
+
+P_c1, P_c2 = initializeProbabilityTables!()
+
+for k in 1:steps
+    update()
+    val += measure(j)
+    check_validity()
+end
+
+println(val/steps)

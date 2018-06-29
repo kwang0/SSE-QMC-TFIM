@@ -1,0 +1,33 @@
+X1 = [0.0 1.0; 1.0 0.0]
+Z1 = [1.0 0.0; 0.0 -1.0]
+I1 = [1.0 0.0; 0.0 1.0]
+
+N = 10
+I_list = Array{Any}(N)
+fill!(I_list, I1)
+
+
+temp = deepcopy(I_list)
+temp[1] = Z1
+temp[2] = Z1
+# op = sparse(kron(temp...))
+
+H = 2 * sparse(kron(temp...))
+for i in 1:N-2
+    temp[i] = I1
+    temp[i + 2] = Z1
+    H = H + (2 * sparse(kron(temp...)))
+end
+
+temp = deepcopy(I_list)
+temp[1] = X1
+H = H - sparse(kron(temp...))
+for i in 1:N-1
+    temp[i] = I1
+    temp[i + 1] = X1
+    H = H - sparse(kron(temp...))
+end
+
+evals,evec = eigs(H, nev=1, which=:SR)
+
+println(evec' * op  * evec)
