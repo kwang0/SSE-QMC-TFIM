@@ -89,7 +89,7 @@ function updateClusters!(α_l::Array{Bool,1}, operators::Array{Tuple{Int64,Int64
     end
 end
 
-function update!(α_l::Array{Bool,1}, operators::Array{Tuple{Int64,Int64},1}, J::Array{Float64,2}, N::Int64, m::Int64, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, i::Int64)
+function update!(α_l::Array{Bool,1}, operators::Array{Tuple{Int64,Int64},1}, J::Array{Float64,2}, N::Int64, m::Int64, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, s::Int64)
     α = deepcopy(α_l)
 
     last_vertex = Array{Vertex}(N)
@@ -168,10 +168,10 @@ function update!(α_l::Array{Bool,1}, operators::Array{Tuple{Int64,Int64},1}, J:
 
         # Measuring <Z_1Z_i> correlators in the middle of simulation
         if p == m
-            if α[1] == α[i]
+            if α[1] == α[s]
                 measurement = 1
             else
-                measurement -1
+                measurement = -1
             end
         end
     end
@@ -180,54 +180,54 @@ function update!(α_l::Array{Bool,1}, operators::Array{Tuple{Int64,Int64},1}, J:
     return measurement
 end
 
-function measure(α_l, operators, i)
-    α = deepcopy(α_l)
-    for p in 1:m
-        if operators[p][1] == -1
-            site = operators[p][2]
-            α[site] = !α[site]
-        end
-    end
+# function measure(α_l, operators, i)
+#     α = deepcopy(α_l)
+#     for p in 1:m
+#         if operators[p][1] == -1
+#             site = operators[p][2]
+#             α[site] = !α[site]
+#         end
+#     end
+#
+#     if α[1] == α[i]
+#         return 1
+#     else
+#         return -1
+#     end
+# end
 
-    if α[1] == α[i]
-        return 1
-    else
-        return -1
-    end
-end
+# function check_validity()
+#     α = deepcopy(α_l)
+#     for p in 1:2m
+#         if operators[p][1] == -1
+#             site = operators[p][2]
+#             α[site] = !α[site] # flip operator
+#         elseif operators[p][1] > 0
+#             site1 = operators[p][1]
+#             site2 = operators[p][2]
+#
+#             if (J[site1, site2] > 0) && (α[site1] == α[site2])
+#                 α1 = α[site1]
+#                 α2 = α[site2]
+#                 error("($p) AF Bond ($site1, $site2) is acting on same spin ($α1, $α2)")
+#             elseif (J[site1, site2] > 0) && (α[site1] == α[site2])
+#                 α1 = α[site1]
+#                 α2 = α[site2]
+#                 error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($α1, $α2)")
+#             elseif (J[site1, site2] == 0)
+#                 α1 = α[site1]
+#                 α2 = α[site2]
+#                 error("($p) Bond ($site1, $site2) exists on non-interacting spins ($α1, $α2)")
+#             end
+#         end
+#     end
+# end
 
-function check_validity()
-    α = deepcopy(α_l)
-    for p in 1:2m
-        if operators[p][1] == -1
-            site = operators[p][2]
-            α[site] = !α[site] # flip operator
-        elseif operators[p][1] > 0
-            site1 = operators[p][1]
-            site2 = operators[p][2]
-
-            if (J[site1, site2] > 0) && (α[site1] == α[site2])
-                α1 = α[site1]
-                α2 = α[site2]
-                error("($p) AF Bond ($site1, $site2) is acting on same spin ($α1, $α2)")
-            elseif (J[site1, site2] > 0) && (α[site1] == α[site2])
-                α1 = α[site1]
-                α2 = α[site2]
-                error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($α1, $α2)")
-            elseif (J[site1, site2] == 0)
-                α1 = α[site1]
-                α2 = α[site2]
-                error("($p) Bond ($site1, $site2) exists on non-interacting spins ($α1, $α2)")
-            end
-        end
-    end
-end
-
-function main()
-    steps = 1000
+# function main()
+    steps = 10000
     delay = steps/10
 
-    N = 10
+    N = 15
     m = 1000
 
     J = zeros(Float64, N, N)
@@ -253,7 +253,7 @@ function main()
             α_l = rand(Bool,N)
             operators = Array{Tuple{Int64, Int64}}(2m)
             fill!(operators, (0,1))
-
+            tic()
             for k in 1:steps
                 measurement = update!(α_l, operators, J, N, m, P_c1, P_c2, i)
                 # check_validity()
@@ -261,7 +261,9 @@ function main()
                     temp[j] += measurement
                 end
             end
+            toc()
             temp[j] /= (steps - delay)
+            println(temp[j])
         end
         push!(avg, mean(temp))
         push!(err, std(temp)/M)
@@ -269,6 +271,6 @@ function main()
         println(std(temp)/M)
     end
     plot(3:2:N, avg, yerr = err)
-end
+# end
 
-main()
+# main()
