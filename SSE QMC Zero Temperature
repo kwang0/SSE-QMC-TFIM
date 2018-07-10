@@ -11,7 +11,7 @@ end
 
 null_vertex = Vertex(0, 3, 0, [nothing, nothing, nothing, nothing])
 
-function initializeProbabilityTables!()
+function initializeProbabilityTables()
     P_c1 = Array{Float64}(N)
     P_c2 = Array{Float64}(N,N)
 
@@ -210,11 +210,11 @@ function check_validity()
     end
 end
 
-steps = 1000
+steps = 10000
 delay = steps/10
 
-N = 10
-m = 100
+N = 15
+m = 1000
 
 J = zeros(Float64, N, N)
 for i in 1:N - 1
@@ -223,20 +223,22 @@ for i in 1:N - 1
 end
 h = ones(Float64, N)
 
-avg = Array{Any}(N-1)
-err = Array{Any}(N-1)
-M = 30
+avg = []
+err = []
+M = 10
 
-P_c1, P_c2 = initializeProbabilityTables!()
+P_c1, P_c2 = initializeProbabilityTables()
 
-for i in 2:N
+for i in 3:2:N
     println("Correlator of site 1 with site $i")
+
     temp = zeros(M)
     for j in 1:M
         println("Iteration: $j")
+
         α_l = rand(Bool,N)
         operators = Array{Tuple{Int64, Int64}}(2m)
-        fill!(operators, (-1,1))
+        fill!(operators, (0,1))
 
         for k in 1:steps
             update!(α_l, operators)
@@ -247,10 +249,8 @@ for i in 2:N
         end
         temp[j] /= (steps - delay)
     end
-    avg[i - 1] = mean(temp)
-    err[i - 1] = std(temp)/M
-    println(avg[i - 1])
-    println(err[i - 1])
+    push!(avg, mean(temp))
+    push!(err, std(temp)/M)
+    println(mean(temp))
+    println(std(temp)/M)
 end
-
-# println(val/(steps - delay))
