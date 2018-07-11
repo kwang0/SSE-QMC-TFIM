@@ -1,0 +1,275 @@
+# Stochastic Series Expansion (SSE) Quantum Monte Carlo (QMC) simulation for the
+# T = 0 Transverse-Field Ising Model (TFIM)
+# using Plots
+
+mutable struct Vertex
+    position::UInt64 # p propagation position in imaginary time
+    operator_type::UInt8 # 0 = site, 1 = bond, 2 = state (not operator), 3 = null
+    site::UInt64 # Included to flip states
+    vertices_out::Array{Vertex} # [left, left1, right, right1]
+end
+
+null_vertex = Vertex(0, 3, 0, [])
+
+function initializeProbabilityTables(J::Array{Float64,2}, h::Array{Float64,1}, N::Int64)
+    P_c1 = Array{Float64}(N)
+    P_c2 = Array{Float64}(N,N)
+
+    M = 2 * abs.(J)
+    for i in 1:N
+        M[i,i] = h[i]
+    end
+    M_sum = sum(M)
+
+    P = sum(M,2)
+    s = 0.0
+    for i in 1:N
+        s += P[i]
+        P_c1[i] = s
+    end
+    P_c1 /= s
+
+    for i in 1:N
+        s = 0.0
+        for j in 1:N
+            s += M[i,j]
+            P_c2[i,j] = s
+        end
+        P_c2[i,:] /= s
+    end
+
+    return P_c1, P_c2, M_sum
+end
+
+function flipCluster!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, vertex::Vertex, direction::Int64, legs_encountered::Set{Tuple{Int64,Int64}}, bonds_encountered::Set{Int64}, state_encountered::Set{Int64}, flip::Bool)
+    p = vertex.position
+    if vertex.operator_type == 2
+        site = vertex.site
+        if !in(site, state_encountered)
+            push!(state_encountered, site)
+            if flip
+                α_l[site] = !α_l[site]
+            end
+            flipCluster!(α_l, operators, vertex.vertices_out[4 - direction], direction, legs_encountered, bonds_encountered, state_encountered, flip)
+        end
+    elseif vertex.operator_type == 0
+        leg = (p, direction)
+        if in(leg, legs_encountered)
+            return
+        end
+        push!(legs_encountered, leg)
+
+        if flip
+            operators[p] = (-(operators[p][1] + 1), operators[p][2])
+        end
+    elseif vertex.operator_type == 1
+        if !in(p, bonds_encountered)
+            push!(bonds_encountered, p)
+            flipCluster!(α_l, operators, vertex.vertices_out[1], 3, legs_encountered, bonds_encountered, state_encountered, flip)
+            flipCluster!(α_l, operators, vertex.vertices_out[2], 3, legs_encountered, bonds_encountered, state_encountered, flip)
+            flipCluster!(α_l, operators, vertex.vertices_out[3], 1, legs_encountered, bonds_encountered, state_encountered, flip)
+            flipCluster!(α_l, operators, vertex.vertices_out[4], 1, legs_encountered, bonds_encountered, state_encountered, flip)
+        end
+    end
+end
+
+
+# Flips the spins of clusters under the Swendsen-Wang algorithm
+function updateClusters!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, vertex_list::Array{Vertex}, leg_set::Set{Tuple{Int64,Int64}})
+    legs_encountered = Set{Tuple{Int64,Int64}}()
+    bonds_encountered = Set{Int64}() # Set of positions of bonds encountered
+    state_encountered = Set{Int64}()
+
+    for leg in leg_set
+        if !in(leg, legs_encountered)
+            push!(legs_encountered, leg)
+
+            p = leg[1]
+            flip = rand(Bool)
+            if flip
+                operators[p] = (-(operators[p][1] + 1), operators[p][2])
+            end
+
+            direction = leg[2]
+            next_vertex = vertex_list[p].vertices_out[direction]
+            flipCluster!(α_l, operators, next_vertex, 4 - direction, legs_encountered, bonds_encountered, state_encountered, flip)
+        end
+    end
+end
+
+function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::Array{Float64,2}, N::Int64, L::Int64, n::Int64, β::Float64, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, M_sum::Float64)
+    α = deepcopy(α_l)
+
+    last_vertex = Array{Vertex}(N)
+    state_vertices = Array{Vertex}(N)
+    for i in 1:N
+        vertex = Vertex(0, 2, i, [null_vertex, null_vertex, null_vertex, null_vertex])
+        last_vertex[i] = vertex
+        state_vertices[i] = vertex
+    end
+
+    vertex_list = Array{Vertex}(L)
+    leg_set = Set{Tuple{Int64,Int64}}()
+
+    # Propagate alpha forward in imaginary time
+    for p in 1:L
+        # Local/diagonal updates
+        if operators[p][1] == -1
+            site = operators[p][2]
+            α[site] = !α[site] # flip operator
+        elseif operators[p][2] == 0 # Null operator
+            if (rand() < (β * M_sum)/(L - n))
+                while true
+                    i = searchsortedfirst(P_c1, rand())
+                    j = searchsortedfirst(P_c2[i,:], rand())
+
+                    if (i == j) # Adding diagonal site operator
+                        operators[p] = (0, i)
+                        break
+                    else
+                        if (J[i,j] > 0) && (α[i] == !α[j]) # Antiferromagnetic bond operator
+                            operators[p] = (i, j)
+                            break
+                        elseif (J[i,j] < 0) && (α[i] == α[j]) # Ferromagnetic bond operator
+                            operators[p] = (i, j)
+                            break
+                        end
+                    end
+                end
+                n += 1
+            end
+        else
+            if (rand() < (L - n + 1.0)/(β * M_sum))
+                operators[p] = (0,0)
+                n -= 1
+            end
+        end
+
+        # Cluster building
+        if (operators[p][1] <= 0) && (operators[p][2] != 0) # Site operator encountered
+            site = operators[p][2]
+            vertex = Vertex(p, 0, site, [last_vertex[site], null_vertex, null_vertex, null_vertex])
+            vertex_list[p] = vertex
+            push!(leg_set, (p, 1)) # Left leg of vertex
+            push!(leg_set, (p, 3)) # Right leg of vertex
+
+            # Update previous vertex
+            if last_vertex[site].vertices_out[3] == null_vertex
+                last_vertex[site].vertices_out[3] = vertex
+            else
+                last_vertex[site].vertices_out[4] = vertex
+            end
+            last_vertex[site] = vertex
+        elseif (operators[p][1] > 0) # Bond operator encountered
+            site1 = operators[p][1]
+            site2 = operators[p][2]
+            vertex = Vertex(p, 1, 0, [last_vertex[site1], last_vertex[site2], null_vertex, null_vertex])
+            vertex_list[p] = vertex
+
+            # Update previous vertices
+            p1 = last_vertex[site1].position
+            p2 = last_vertex[site2].position
+            if last_vertex[site1].vertices_out[3] == null_vertex
+                last_vertex[site1].vertices_out[3] = vertex
+            else
+                last_vertex[site1].vertices_out[4] = vertex
+            end
+            if last_vertex[site2].vertices_out[3] == null_vertex
+                last_vertex[site2].vertices_out[3] = vertex
+            else
+                last_vertex[site2].vertices_out[4] = vertex
+            end
+            last_vertex[site1] = vertex
+            last_vertex[site2] = vertex
+        end
+    end
+
+    s = 0.0
+    for i in 1:N # Connect vertices at periodic boundaries
+        state_vertices[i].vertices_out[1] = last_vertex[i]
+        if last_vertex[i].vertices_out[3] == null_vertex
+            last_vertex[i].vertices_out[3] = state_vertices[i]
+        else
+            last_vertex[i].vertices_out[4] = state_vertices[i]
+        end
+
+        if α_l[i]
+            s += 1
+        else
+            s -= 1
+        end
+    end
+    s /= N
+
+    updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
+
+    while (L <= 4/3 * n)
+        push!(operators, (0,0))
+        L += 1
+    end
+    return n, s
+end
+
+function check_validity(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::Array{Float64,2}, L::Int64)
+    α = deepcopy(α_l)
+    for p in 1:L
+        if operators[p][1] == -1
+            site = operators[p][2]
+            α[site] = !α[site] # flip operator
+        elseif operators[p][1] > 0
+            site1 = operators[p][1]
+            site2 = operators[p][2]
+
+            if (J[site1, site2] > 0) && (α[site1] == α[site2])
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) AF Bond ($site1, $site2) is acting on same spin ($α1, $α2)")
+            elseif (J[site1, site2] > 0) && (α[site1] == α[site2])
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($α1, $α2)")
+            elseif (J[site1, site2] == 0)
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) Bond ($site1, $site2) exists on non-interacting spins ($α1, $α2)")
+            end
+        end
+    end
+    if (α != α_l)
+        error("Periodicity not maintained!")
+    end
+end
+
+steps = 10000
+delay = steps/10
+
+N = 16
+L = 100
+n = 0
+β = 1.0/2.8
+
+J = zeros(Float64, N, N)
+for i in 1:N
+    for j in i + 1:N
+        J[i,j] = 0.5 * ((1.0/(i - j)^2) + (1.0/(N - abs(i - j))^2))
+        J[j,i] = J[i,j]
+    end
+end
+h = ones(Float64, N)
+
+P_c1, P_c2, M_sum = initializeProbabilityTables(J, h, N)
+
+α_l = BitArray(rand(Bool,N))
+operators = Array{Tuple{Int64, Int64}}(L)
+fill!(operators, (0,0))
+
+temp = 0.0
+for k in 1:steps
+    n, magnetization = update!(α_l, operators, J, N, L, n, β, P_c1, P_c2, M_sum)
+    L = length(operators)
+    check_validity(α_l, operators, J, L)
+    if (k > delay)
+        temp += magnetization^2
+    end
+end
+temp /= (steps - delay)
