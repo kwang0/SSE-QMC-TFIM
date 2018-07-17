@@ -39,10 +39,10 @@ temp[1] = Z1
 temp[2] = Z1
 op = sparse(kron(temp...))
 exact[1] = (evec' * op  * evec)[1]
-
-for i in 3:N
-    temp[i-1] = I1
-    temp[i] = Z1
-    op = sparse(kron(temp...))
-    exact[i - 1] = (evec' * op  * evec)[1]
-end
+# 
+# for i in 3:N
+#     temp[i-1] = I1
+#     temp[i] = Z1
+#     op = sparse(kron(temp...))
+#     exact[i - 1] = (evec' * op  * evec)[1]
+# end

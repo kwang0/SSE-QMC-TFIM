@@ -1,17 +1,17 @@
 # Stochastic Series Expansion (SSE) Quantum Monte Carlo (QMC) simulation for the
 # T = 0 Transverse-Field Ising Model (TFIM)
-# using Plots
+using Plots
 
 mutable struct Vertex
-    position::UInt64 # p propagation position in imaginary time
-    operator_type::UInt8 # 0 = site, 1 = bond, 2 = state (not operator), 3 = null
-    site::UInt64 # Included to flip states
-    vertices_out::Array{Vertex} # [left, left1, right, right1]
+    position::Int # p propagation position in imaginary time
+    operator_type::Int # 0 = site, 1 = bond, 2 = state (not operator), 3 = null
+    site::Int # Included to flip states
+    vertices_out::Array{Vertex,1} # [left, left1, right, right1]
 end
 
-null_vertex = Vertex(0, 3, 0, [])
+null_vertex = Vertex(0, 3, 0, Vertex[])
 
-function initializeProbabilityTables(J::Array{Float64,2}, h::Array{Float64,1}, N::Int64)
+function initializeProbabilityTables(J::Array{Float64,2}, h::Array{Float64,1}, N::Int)
     P_c1 = Array{Float64}(N)
     P_c2 = Array{Float64}(N,N)
 
@@ -41,7 +41,7 @@ function initializeProbabilityTables(J::Array{Float64,2}, h::Array{Float64,1}, N
     return P_c1, P_c2, M_sum
 end
 
-function flipCluster!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, vertex::Vertex, direction::Int64, legs_encountered::Set{Tuple{Int64,Int64}}, bonds_encountered::Set{Int64}, state_encountered::Set{Int64}, flip::Bool)
+function flipCluster!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, vertex::Vertex, direction::Int, legs_encountered::Set{Tuple{Int,Int}}, bonds_encountered::Set{Int}, state_encountered::Set{Int}, flip::Bool)
     p = vertex.position
     if vertex.operator_type == 2
         site = vertex.site
@@ -75,10 +75,10 @@ end
 
 
 # Flips the spins of clusters under the Swendsen-Wang algorithm
-function updateClusters!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, vertex_list::Array{Vertex}, leg_set::Set{Tuple{Int64,Int64}})
-    legs_encountered = Set{Tuple{Int64,Int64}}()
-    bonds_encountered = Set{Int64}() # Set of positions of bonds encountered
-    state_encountered = Set{Int64}()
+function updateClusters!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, vertex_list::Array{Vertex,1}, leg_set::Set{Tuple{Int,Int}})
+    legs_encountered = Set{Tuple{Int,Int}}()
+    bonds_encountered = Set{Int}() # Set of positions of bonds encountered
+    state_encountered = Set{Int}()
 
     for leg in leg_set
         if !in(leg, legs_encountered)
@@ -97,19 +97,21 @@ function updateClusters!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},
     end
 end
 
-function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::Array{Float64,2}, N::Int64, L::Int64, n::Int64, β::Float64, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, M_sum::Float64)
+function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array{Float64,2}, N::Int, L::Int, n::Int, β::Float64, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, M_sum::Float64)
     α = deepcopy(α_l)
+
+    constrained_sites = Set{Int}()
 
     last_vertex = Array{Vertex}(N)
     state_vertices = Array{Vertex}(N)
-    for i in 1:N
-        vertex = Vertex(0, 2, i, [null_vertex, null_vertex, null_vertex, null_vertex])
-        last_vertex[i] = vertex
-        state_vertices[i] = vertex
+    for site in 1:N
+        vertex = Vertex(0, 2, site, [null_vertex, null_vertex, null_vertex, null_vertex])
+        last_vertex[site] = vertex
+        state_vertices[site] = vertex
     end
 
     vertex_list = Array{Vertex}(L)
-    leg_set = Set{Tuple{Int64,Int64}}()
+    leg_set = Set{Tuple{Int,Int}}()
 
     # Propagate alpha forward in imaginary time
     for p in 1:L
@@ -139,7 +141,7 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::A
                 n += 1
             end
         else
-            if (rand() < (L - n + 1.0)/(β * M_sum))
+            if (rand() < (L - n + 1.0)/((β * M_sum)))
                 operators[p] = (0,0)
                 n -= 1
             end
@@ -148,6 +150,7 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::A
         # Cluster building
         if (operators[p][1] <= 0) && (operators[p][2] != 0) # Site operator encountered
             site = operators[p][2]
+            push!(constrained_sites, site)
             vertex = Vertex(p, 0, site, [last_vertex[site], null_vertex, null_vertex, null_vertex])
             vertex_list[p] = vertex
             push!(leg_set, (p, 1)) # Left leg of vertex
@@ -163,6 +166,8 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::A
         elseif (operators[p][1] > 0) # Bond operator encountered
             site1 = operators[p][1]
             site2 = operators[p][2]
+            push!(constrained_sites, site1)
+            push!(constrained_sites, site2)
             vertex = Vertex(p, 1, 0, [last_vertex[site1], last_vertex[site2], null_vertex, null_vertex])
             vertex_list[p] = vertex
 
@@ -184,16 +189,16 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::A
         end
     end
 
-    s = 0.0
-    for i in 1:N # Connect vertices at periodic boundaries
-        state_vertices[i].vertices_out[1] = last_vertex[i]
-        if last_vertex[i].vertices_out[3] == null_vertex
-            last_vertex[i].vertices_out[3] = state_vertices[i]
+    s = 0.0 # magnetization
+    for site in 1:N # Connect vertices at periodic boundaries
+        state_vertices[site].vertices_out[1] = last_vertex[site]
+        if last_vertex[site].vertices_out[3] == null_vertex
+            last_vertex[site].vertices_out[3] = state_vertices[site]
         else
-            last_vertex[i].vertices_out[4] = state_vertices[i]
+            last_vertex[site].vertices_out[4] = state_vertices[site]
         end
 
-        if α_l[i]
+        if α_l[site]
             s += 1
         else
             s -= 1
@@ -202,6 +207,11 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::A
     s /= N
 
     updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
+    for site in 1:N # Free spins also flipped with 1/2 probability
+        if !in(site, constrained_sites) && rand(Bool)
+            α_l[site] = !α_l[site]
+        end
+    end
 
     while (L <= 4/3 * n)
         push!(operators, (0,0))
@@ -210,7 +220,7 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::A
     return n, s
 end
 
-function check_validity(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::Array{Float64,2}, L::Int64)
+function check_validity(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array{Float64,2}, L::Int)
     α = deepcopy(α_l)
     for p in 1:L
         if operators[p][1] == -1
@@ -241,35 +251,54 @@ function check_validity(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1
 end
 
 steps = 10000
-delay = steps/10
+delay = steps/5
 
 N = 16
-L = 100
-n = 0
-β = 1.0/2.8
+β = 0.0
 
 J = zeros(Float64, N, N)
 for i in 1:N
     for j in i + 1:N
-        J[i,j] = 0.5 * ((1.0/(i - j)^2) + (1.0/(N - abs(i - j))^2))
+        J[i,j] = -0.5 * ((1.0/(i - j)^2) + (1.0/(N - abs(i - j))^2))
         J[j,i] = J[i,j]
     end
 end
 h = ones(Float64, N)
+h /= 2
 
 P_c1, P_c2, M_sum = initializeProbabilityTables(J, h, N)
 
-α_l = BitArray(rand(Bool,N))
-operators = Array{Tuple{Int64, Int64}}(L)
-fill!(operators, (0,0))
+avg = Float64[]
+err = Float64[]
+M = 100
 
-temp = 0.0
-for k in 1:steps
-    n, magnetization = update!(α_l, operators, J, N, L, n, β, P_c1, P_c2, M_sum)
-    L = length(operators)
-    check_validity(α_l, operators, J, L)
-    if (k > delay)
-        temp += magnetization^2
+for T in 1.3:0.01:1.5
+    println("T/J = $T")
+    β = 1.0/T
+    temp = zeros(M)
+    for j in 1:M
+        println("Iteration: $j")
+
+        L = 100
+        n = 0
+        α_l = BitArray(rand(Bool,N))
+        operators = Array{Tuple{Int, Int}}(L)
+        fill!(operators, (0,0))
+        tic()
+        for k in 1:steps
+            n, magnetization = update!(α_l, operators, J, N, L, n, β, P_c1, P_c2, M_sum)
+            L = length(operators)
+            # check_validity(α_l, operators, J, L)
+            if (k > delay)
+                temp[j] += magnetization^2
+            end
+        end
+        toc()
+        temp[j] /= (steps - delay)
+        println(temp[j])
     end
+    push!(avg, mean(temp))
+    push!(err, std(temp)/M)
+    println(mean(temp))
+    println(std(temp)/M)
 end
-temp /= (steps - delay)

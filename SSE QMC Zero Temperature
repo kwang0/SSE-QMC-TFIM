@@ -3,15 +3,15 @@
 using Plots
 
 mutable struct Vertex
-    position::UInt64 # p propagation position in imaginary time
-    operator_type::UInt8 # 0 = site, 1 = bond, 2 = state (not operator), 3 = null
-    site::UInt64 # Included to flip states
-    vertices_out::Array{Vertex} # [left, left1, right, right1]
+    position::Int # p propagation position in imaginary time
+    operator_type::Int # 0 = site, 1 = bond, 2 = state (not operator), 3 = null
+    site::Int # Included to flip states
+    vertices_out::Array{Vertex,1} # [left, left1, right, right1]
 end
 
-null_vertex = Vertex(0, 3, 0, [])
+null_vertex = Vertex(0, 3, 0, Vertex[])
 
-function initializeProbabilityTables(J::Array{Float64,2}, h::Array{Float64,1}, N::Int64)
+function initializeProbabilityTables(J::Array{Float64,2}, h::Array{Float64,1}, N::Int)
     P_c1 = Array{Float64}(N)
     P_c2 = Array{Float64}(N,N)
 
@@ -40,7 +40,7 @@ function initializeProbabilityTables(J::Array{Float64,2}, h::Array{Float64,1}, N
     return P_c1, P_c2
 end
 
-function flipCluster!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, vertex::Vertex, direction::Int64, legs_encountered::Set{Tuple{Int64,Int64}}, bonds_encountered::Set{Int64}, flip::Bool)
+function flipCluster!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, vertex::Vertex, direction::Int, legs_encountered::Set{Tuple{Int,Int}}, bonds_encountered::Set{Int}, flip::Bool)
     p = vertex.position
     if vertex.operator_type == 2
         if (direction == 3) && flip
@@ -69,9 +69,9 @@ end
 
 
 # Flips the spins of clusters under the Swendsen-Wang algorithm
-function updateClusters!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, vertex_list::Array{Vertex}, leg_set::Set{Tuple{Int64,Int64}})
-    legs_encountered = Set{Tuple{Int64,Int64}}()
-    bonds_encountered = Set{Int64}() # Set of positions of bonds encountered
+function updateClusters!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, vertex_list::Array{Vertex,1}, leg_set::Set{Tuple{Int,Int}})
+    legs_encountered = Set{Tuple{Int,Int}}()
+    bonds_encountered = Set{Int}() # Set of positions of bonds encountered
     for leg in leg_set
         if !in(leg, legs_encountered)
             push!(legs_encountered, leg)
@@ -89,18 +89,18 @@ function updateClusters!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},
     end
 end
 
-function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::Array{Float64,2}, N::Int64, m::Int64, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, s::Int64)
+function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array{Float64,2}, N::Int, m::Int, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, s::Int)
     α = deepcopy(α_l)
 
     last_vertex = Array{Vertex}(N)
-    for i in 1:N
-        last_vertex[i] = Vertex(0, 2, i, [null_vertex, null_vertex, null_vertex, null_vertex])
+    for site in 1:N
+        last_vertex[site] = Vertex(0, 2, site, [null_vertex, null_vertex, null_vertex, null_vertex])
     end
 
     vertex_list = Array{Vertex}(2m)
-    leg_set = Set{Tuple{Int64,Int64}}()
+    leg_set = Set{Tuple{Int,Int}}()
 
-    measurement = 0
+    measurement = 0.0
 
     # Propagate alpha forward in imaginary time
     for p in 1:2m
@@ -167,12 +167,16 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int64,Int64},1}, J::A
         end
 
         # Measuring <Z_1Z_i> correlators in the middle of simulation
-        if p == m
-            if α[1] == α[s]
-                measurement = 1
-            else
-                measurement = -1
-            end
+        # if p == m
+        #     if α[1] == α[s]
+        #         measurement = 1
+        #     else
+        #         measurement = -1
+        #     end
+        # end
+
+        if operators[p][1] == 0
+            measurement += 1.0
         end
     end
     updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
@@ -226,7 +230,7 @@ end
 steps = 10000
 delay = steps/10
 
-N = 15
+N = 10
 m = 1000
 
 J = zeros(Float64, N, N)
@@ -236,25 +240,25 @@ for i in 1:N - 1
 end
 h = ones(Float64, N)
 
-avg = []
-err = []
-M = 10
-
 P_c1, P_c2 = initializeProbabilityTables(J, h, N)
 
-for i in 3:2:N
-    println("Correlator of site 1 with site $i")
+# avg = Float64[]
+# err = Float64[]
+M = 50
+
+# for i in 3:2:N
+    # println("Correlator of site 1 with site $i")
 
     temp = zeros(M)
     for j in 1:M
         println("Iteration: $j")
 
         α_l = BitArray(rand(Bool,N))
-        operators = Array{Tuple{Int64, Int64}}(2m)
+        operators = Array{Tuple{Int, Int}}(2m)
         fill!(operators, (0,1))
         tic()
         for k in 1:steps
-            measurement = update!(α_l, operators, J, N, m, P_c1, P_c2, i)
+            measurement = update!(α_l, operators, J, N, m, P_c1, P_c2, 0)
             # check_validity()
             if (k > delay)
                 temp[j] += measurement
@@ -264,9 +268,8 @@ for i in 3:2:N
         temp[j] /= (steps - delay)
         println(temp[j])
     end
-    push!(avg, mean(temp))
-    push!(err, std(temp)/M)
+    # push!(avg, mean(temp))
+    # push!(err, std(temp)/M)
     println(mean(temp))
     println(std(temp)/M)
-end
-plot(3:2:N, avg, yerr = err)
+# end
