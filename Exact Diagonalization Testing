@@ -31,15 +31,18 @@ for i in 1:N-1
     H = H - (h * sparse(kron(temp...)))
 end
 
-evals,evec = eigs(H, nev=1, which=:SR)
+# evals,evec = eigs(H, nev=1, which=:SR)
+evals,evec = eig(Hermitian(Matrix(H)))
 
-exact = Array{Any}(N - 1)
-temp = deepcopy(I_list)
-temp[1] = Z1
-temp[2] = Z1
-op = sparse(kron(temp...))
-exact[1] = (evec' * op  * evec)[1]
-# 
+for i in evec.siz
+
+# exact = Array{Any}(N - 1)
+# temp = deepcopy(I_list)
+# temp[1] = Z1
+# temp[2] = Z1
+# op = sparse(kron(temp...))
+# exact[1] = (evec' * op  * evec)[1]
+#
 # for i in 3:N
 #     temp[i-1] = I1
 #     temp[i] = Z1

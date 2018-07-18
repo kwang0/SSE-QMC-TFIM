@@ -214,7 +214,7 @@ end
 #                 α1 = α[site1]
 #                 α2 = α[site2]
 #                 error("($p) AF Bond ($site1, $site2) is acting on same spin ($α1, $α2)")
-#             elseif (J[site1, site2] > 0) && (α[site1] == α[site2])
+#             elseif (J[site1, site2] < 0) && (α[site1] != α[site2])
 #                 α1 = α[site1]
 #                 α2 = α[site2]
 #                 error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($α1, $α2)")
