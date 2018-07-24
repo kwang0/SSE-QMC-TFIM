@@ -233,7 +233,7 @@ delay = steps/10
 N = 20
 m = 100
 
-
+asdf
 θ = 0.0
 κ = 2
 J = zeros(Float64, N, N)
