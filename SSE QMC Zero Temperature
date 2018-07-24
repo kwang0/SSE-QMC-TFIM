@@ -167,17 +167,17 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
         end
 
         # Measuring <Z_1Z_i> correlators in the middle of simulation
-        # if p == m
-        #     if α[1] == α[s]
-        #         measurement = 1
-        #     else
-        #         measurement = -1
-        #     end
-        # end
-
-        if operators[p][1] == 0
-            measurement += 1.0
+        if p == m
+            if α[N >> 2] == α[s]
+                measurement = 1
+            else
+                measurement = -1
+            end
         end
+
+        # if operators[p][1] == 0
+        #     measurement += 1.0
+        # end
     end
     updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
 
@@ -230,24 +230,31 @@ end
 steps = 10000
 delay = steps/10
 
-N = 10
-m = 1000
+N = 20
+m = 100
 
+
+θ = 0.0
+κ = 2
 J = zeros(Float64, N, N)
-for i in 1:N - 1
-    J[i,i+1] = 1
-    J[i+1,i] = 1
+for i in 1:N
+    for j in i + 1:N
+        J[i,j] = sin(θ) * (1.0/(i - j)^κ)
+        J[j,i] = J[i,j]
+    end
 end
 h = ones(Float64, N)
+h *= cos(θ)
 
 P_c1, P_c2 = initializeProbabilityTables(J, h, N)
 
-# avg = Float64[]
-# err = Float64[]
-M = 50
+avg = Float64[]
+err = Float64[]
+M = 20
 
-# for i in 3:2:N
-    # println("Correlator of site 1 with site $i")
+while (m < 50000)
+    println("Testing convergence at m = $m")
+    # println("Correlator of site $N/2 with site $i")
 
     temp = zeros(M)
     for j in 1:M
@@ -258,7 +265,7 @@ M = 50
         fill!(operators, (0,1))
         tic()
         for k in 1:steps
-            measurement = update!(α_l, operators, J, N, m, P_c1, P_c2, 0)
+            measurement = update!(α_l, operators, J, N, m, P_c1, P_c2, 11)
             # check_validity()
             if (k > delay)
                 temp[j] += measurement
@@ -268,8 +275,9 @@ M = 50
         temp[j] /= (steps - delay)
         println(temp[j])
     end
-    # push!(avg, mean(temp))
-    # push!(err, std(temp)/M)
+    push!(avg, mean(temp))
+    push!(err, std(temp)/M)
     println(mean(temp))
     println(std(temp)/M)
-# end
+    m *= 2
+end

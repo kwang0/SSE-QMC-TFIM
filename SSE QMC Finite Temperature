@@ -250,7 +250,7 @@ end
 steps = 10000
 delay = steps/5
 
-N = 64
+N = 128
 β = 0.0
 
 J = zeros(Float64, N, N)
