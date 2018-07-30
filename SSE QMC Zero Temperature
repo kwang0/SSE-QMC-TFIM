@@ -1,6 +1,6 @@
 # Stochastic Series Expansion (SSE) Quantum Monte Carlo (QMC) simulation for the
 # T = 0 Transverse-Field Ising Model (TFIM)
-using Plots
+# using JLD2, FileIO
 
 mutable struct Vertex
     position::Int # p propagation position in imaginary time
@@ -100,7 +100,9 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
     vertex_list = Array{Vertex}(2m)
     leg_set = Set{Tuple{Int,Int}}()
 
-    measurement = 0.0
+    sum = 0.0
+    spin1 = 0.0
+    spin2 = 0.0
 
     # Propagate alpha forward in imaginary time
     for p in 1:2m
@@ -166,13 +168,34 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
             last_vertex[site2] = vertex
         end
 
-        # Measuring <Z_1Z_i> correlators in the middle of simulation
-        if p == m
-            if α[N >> 2] == α[s]
-                measurement = 1
+        if p == m # Middle of imaginary time propagation samples ground state
+            # Measuring <Z_(N/2) * Z_i> correlators
+            if α[N >> 1]
+                spin1 = 1
             else
-                measurement = -1
+                spin1 = -1
             end
+            if α[s]
+                spin2 = 1
+            else
+                spin2 = -1
+            end
+
+            # Measuring magnetization
+            for site in 1:N
+            	spin = 0
+                if α[site]
+                    spin = 1
+                else
+                    spin = -1
+                end
+
+            	if site % 2 == 1 # Anti-ferromagnet
+            	    spin *= -1
+            	end
+            	sum += spin
+            end
+            sum /= N
         end
 
         # if operators[p][1] == 0
@@ -181,7 +204,8 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
     end
     updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
 
-    return measurement
+    return sum
+    # return spin1, spin2
 end
 
 # function measure(α_l, operators, i)
@@ -227,36 +251,47 @@ end
 #     end
 # end
 
-steps = 10000
-delay = steps/10
+steps = 100000
+delay = 1000
 
 N = 20
-m = 100
+m = 2000
 
-asdf
-θ = 0.0
-κ = 2
-J = zeros(Float64, N, N)
-for i in 1:N
-    for j in i + 1:N
-        J[i,j] = sin(θ) * (1.0/(i - j)^κ)
-        J[j,i] = J[i,j]
-    end
-end
-h = ones(Float64, N)
-h *= cos(θ)
 
-P_c1, P_c2 = initializeProbabilityTables(J, h, N)
+# θ = 0.5
+κ = 1
+
+
+
+
 
 avg = Float64[]
 err = Float64[]
-M = 20
+M = 10
 
-while (m < 50000)
-    println("Testing convergence at m = $m")
+println("N = $N, m = $m, θ = 0:0.1:1.5, κ = $κ, M = $M")
+
+# for i in ((N >> 1) + 1):N
+# while m < 100000
+for θ in 1.4:0.1:1.5
+    println("Calculating binder cumulant at θ = $θ")
+    # println("Testing convergence at m = $m")
     # println("Correlator of site $N/2 with site $i")
+    J = zeros(Float64, N, N)
+    for i in 1:N
+        for j in i + 1:N
+            J[i,j] = sin(θ) * (1.0/abs(i - j)^κ)
+            J[j,i] = J[i,j]
+        end
+    end
+    h = ones(Float64, N)
+    h *= cos(θ)
 
-    temp = zeros(M)
+    P_c1, P_c2 = initializeProbabilityTables(J, h, N)
+
+    temp = zeros(M,2)
+    # correlators = zeros(M)
+    binder_cumulant = zeros(M)
     for j in 1:M
         println("Iteration: $j")
 
@@ -265,19 +300,34 @@ while (m < 50000)
         fill!(operators, (0,1))
         tic()
         for k in 1:steps
-            measurement = update!(α_l, operators, J, N, m, P_c1, P_c2, 11)
+            # spin1, spin2 = update!(α_l, operators, J, N, m, P_c1, P_c2, 501)
+	        magnetization = update!(α_l, operators, J, N, m, P_c1, P_c2, 1)
             # check_validity()
             if (k > delay)
-                temp[j] += measurement
+                # temp[j,1] += spin1 * spin2
+                # temp[j,2] += spin1
+                # temp[j,3] += spin2
+		        temp[j,1] += magnetization^2
+		        temp[j,2] += magnetization^4
             end
         end
         toc()
-        temp[j] /= (steps - delay)
-        println(temp[j])
+        temp[j,:] /= (steps - delay)
+        # correlators[j] = temp[j,1] - (temp[j,2] * temp[j,3])
+        # println(correlators[j])
+        println(temp[j,2])
+        println(temp[j,1]^2)
+    	binder_cumulant[j] = 1 - (temp[j,2])/(3 * (temp[j,1])^2)
+    	println(binder_cumulant[j])
+    	flush(STDOUT)
     end
-    push!(avg, mean(temp))
-    push!(err, std(temp)/M)
-    println(mean(temp))
-    println(std(temp)/M)
-    m *= 2
+    push!(avg, mean(binder_cumulant))
+    push!(err, std(binder_cumulant)/M)
+    println(mean(binder_cumulant))
+    println(std(binder_cumulant)/M)
+    # m *= 2
+    flush(STDOUT)
 end
+
+# @save "kwang98-testing.jld2" avg
+writedlm("/lustre/kwang98/Koffel_binder_cumulant_corrected_$(N)_$(m)_0:0.1:1.5_$(κ)_$(M).txt", (avg,err))
