@@ -1,40 +1,59 @@
 X1 = [0.0 1.0; 1.0 0.0]
 Z1 = [1.0 0.0; 0.0 -1.0]
 I1 = [1.0 0.0; 0.0 1.0]
+ZERO = [0.0 0.0; 0.0 0.0]
 
-N = 10
-J = 1
-h = 1
+N = 8
+κ = 2
 
 I_list = Array{Any}(N)
 fill!(I_list, I1)
 
+ZERO_list = Array{Any}(N)
+fill!(ZERO_list, ZERO)
 
-temp = deepcopy(I_list)
-temp[1] = Z1
-temp[2] = Z1
-# op = sparse(kron(temp...))
+M = sparse(kron(ZERO_list...))
+for i in 1:N
+    temp = deepcopy(I_list)
+    temp[i] = Z1
+    M += (-1)^i * sparse(kron(temp...))
+end
+M /= N
 
-H = 2 * J * sparse(kron(temp...))
-for i in 1:N-2
-    temp[i] = I1
-    temp[i + 2] = Z1
-    H = H + (2 * J * sparse(kron(temp...)))
+binder = Float64[]
+
+for θ in 0.0:0.1:1.5
+    J = zeros(Float64, N, N)
+    for i in 1:N
+        for j in i + 1:N
+            J[i,j] = sin(θ) * (0.5/abs(i - j)^κ)
+            J[j,i] = J[i,j]
+        end
+    end
+    h = ones(Float64, N)
+    h *= cos(θ)
+
+    H = sparse(kron(ZERO_list...))
+    for i in 1:N
+        temp = deepcopy(I_list)
+        temp[i] = X1
+        H += h[i] * sparse(kron(temp...))
+        for j in i + 1:N
+            temp = deepcopy(I_list)
+            temp[i] = Z1
+            temp[j] = Z1
+            H += 2 * J[i,j] * sparse(kron(temp...))
+        end
+    end
+
+    evals,evec = eigs(H, nev=1, which=:SR)
+
+    push!(binder, 1 - ((evec' * M^4 * evec)[1])/(3 * ((evec' * M^2 * evec)[1])^2))
 end
 
-temp = deepcopy(I_list)
-temp[1] = X1
-H = H - (h * sparse(kron(temp...)))
-for i in 1:N-1
-    temp[i] = I1
-    temp[i + 1] = X1
-    H = H - (h * sparse(kron(temp...)))
-end
+# evals,evec = eig(Hermitian(Matrix(H)))
 
-# evals,evec = eigs(H, nev=1, which=:SR)
-evals,evec = eig(Hermitian(Matrix(H)))
 
-for i in evec.siz
 
 # exact = Array{Any}(N - 1)
 # temp = deepcopy(I_list)

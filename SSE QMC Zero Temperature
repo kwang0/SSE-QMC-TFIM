@@ -100,9 +100,13 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
     vertex_list = Array{Vertex}(2m)
     leg_set = Set{Tuple{Int,Int}}()
 
-    sum = 0.0
+    magnetization = 0.0
     spin1 = 0.0
     spin2 = 0.0
+    middle_state = BitArray{1}()
+    n_diagonal = 0
+    n_off_diagonal = 0
+    n_bond = 0
 
     # Propagate alpha forward in imaginary time
     for p in 1:2m
@@ -110,20 +114,34 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
         if operators[p][1] == -1
             site = operators[p][2]
             α[site] = !α[site] # flip operator
+            n_off_diagonal += 1
         else
             while true
                 i = searchsortedfirst(P_c1, rand())
                 j = searchsortedfirst(P_c2[i,:], rand())
 
                 if (i == j) # Adding diagonal site operator
-                    operators[p] = (0, i)
-                    break
+                    # if rand(Bool)
+                        operators[p] = (0, i)
+                        n_diagonal += 1
+                        break
+                    # else
+                    #     operators[p] = (-1, i)
+                    #     α[i] = !α[i]
+                    #     n_off_diagonal += 1
+                    #     break
+                    # end
                 else
                     if (J[i,j] > 0) && (α[i] == !α[j]) # Antiferromagnetic bond operator
-                        operators[p] = (i, j)
-                        break
+                        # if (i - j) % 2 == 1
+                            # println("($i, $j)")
+                            operators[p] = (i, j)
+                            n_bond += 1
+                            break
+                        # end
                     elseif (J[i,j] < 0) && (α[i] == α[j]) # Ferromagnetic bond operator
                         operators[p] = (i, j)
+                        n_bond += 1
                         break
                     end
                 end
@@ -169,60 +187,43 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
         end
 
         if p == m # Middle of imaginary time propagation samples ground state
-            # Measuring <Z_(N/2) * Z_i> correlators
-            if α[N >> 1]
-                spin1 = 1
-            else
-                spin1 = -1
-            end
-            if α[s]
-                spin2 = 1
-            else
-                spin2 = -1
-            end
-
-            # Measuring magnetization
-            for site in 1:N
-            	spin = 0
-                if α[site]
-                    spin = 1
-                else
-                    spin = -1
-                end
-
-            	if site % 2 == 1 # Anti-ferromagnet
-            	    spin *= -1
-            	end
-            	sum += spin
-            end
-            sum /= N
+            middle_state = deepcopy(α)
         end
-
-        # if operators[p][1] == 0
-        #     measurement += 1.0
-        # end
     end
+
     updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
 
-    return sum
+    # Measuring <Z_(N/2) * Z_i> correlators
+    if middle_state[N >> 1]
+        spin1 = 1
+    else
+        spin1 = -1
+    end
+    if middle_state[s]
+        spin2 = 1
+    else
+        spin2 = -1
+    end
+
+    # Measuring magnetization
+    for site in 1:N
+    	spin = 0
+        if middle_state[site]
+            spin = 1
+        else
+            spin = -1
+        end
+
+    	if site % 2 == 1 # Anti-ferromagnet
+    	    spin *= -1
+    	end
+    	magnetization += spin
+    end
+    magnetization /= N
+
+    return magnetization, middle_state, n_diagonal, n_off_diagonal, n_bond
     # return spin1, spin2
 end
-
-# function measure(α_l, operators, i)
-#     α = deepcopy(α_l)
-#     for p in 1:m
-#         if operators[p][1] == -1
-#             site = operators[p][2]
-#             α[site] = !α[site]
-#         end
-#     end
-#
-#     if α[1] == α[i]
-#         return 1
-#     else
-#         return -1
-#     end
-# end
 
 # function check_validity()
 #     α = deepcopy(α_l)
@@ -252,14 +253,14 @@ end
 # end
 
 steps = 100000
-delay = 1000
+delay = steps/2
 
-N = 20
-m = 2000
+N = 8
+m = 200
 
 
-# θ = 0.5
-κ = 1
+# θ = 1.5
+κ = 2
 
 
 
@@ -267,13 +268,12 @@ m = 2000
 
 avg = Float64[]
 err = Float64[]
-M = 10
+M = 5
 
-println("N = $N, m = $m, θ = 0:0.1:1.5, κ = $κ, M = $M")
-
+# println("N = $N, m = $m, θ = 0:0.1:1.5, κ = $κ, M = $M")
 # for i in ((N >> 1) + 1):N
 # while m < 100000
-for θ in 1.4:0.1:1.5
+for θ in 0.0:0.1:1.5
     println("Calculating binder cumulant at θ = $θ")
     # println("Testing convergence at m = $m")
     # println("Correlator of site $N/2 with site $i")
@@ -289,6 +289,9 @@ for θ in 1.4:0.1:1.5
 
     P_c1, P_c2 = initializeProbabilityTables(J, h, N)
 
+    time_series = zeros(M, steps)
+    states = Array{BitArray, 2}(M, steps)
+    n_operators = Array{Tuple{Int, Int, Int}, 2}(M, steps)
     temp = zeros(M,2)
     # correlators = zeros(M)
     binder_cumulant = zeros(M)
@@ -296,12 +299,18 @@ for θ in 1.4:0.1:1.5
         println("Iteration: $j")
 
         α_l = BitArray(rand(Bool,N))
+        for i in 1:N
+            α_l[i] = (i % 2 == 0)
+        end
         operators = Array{Tuple{Int, Int}}(2m)
         fill!(operators, (0,1))
         tic()
         for k in 1:steps
             # spin1, spin2 = update!(α_l, operators, J, N, m, P_c1, P_c2, 501)
-	        magnetization = update!(α_l, operators, J, N, m, P_c1, P_c2, 1)
+	        magnetization, state, n_diagonal, n_off_diagonal, n_bond = update!(α_l, operators, J, N, m, P_c1, P_c2, 1)
+            time_series[j,k] = magnetization
+            states[j,k] = state
+            n_operators[j,k] = (n_diagonal, n_off_diagonal, n_bond)
             # check_validity()
             if (k > delay)
                 # temp[j,1] += spin1 * spin2
@@ -315,19 +324,19 @@ for θ in 1.4:0.1:1.5
         temp[j,:] /= (steps - delay)
         # correlators[j] = temp[j,1] - (temp[j,2] * temp[j,3])
         # println(correlators[j])
-        println(temp[j,2])
-        println(temp[j,1]^2)
+        # println(temp[j,2])
+        # println(temp[j,1])
     	binder_cumulant[j] = 1 - (temp[j,2])/(3 * (temp[j,1])^2)
     	println(binder_cumulant[j])
-    	flush(STDOUT)
+    	# flush(STDOUT)
     end
     push!(avg, mean(binder_cumulant))
-    push!(err, std(binder_cumulant)/M)
+    push!(err, std(binder_cumulant)/sqrt(M))
     println(mean(binder_cumulant))
-    println(std(binder_cumulant)/M)
+    println(std(binder_cumulant)/sqrt(M))
     # m *= 2
-    flush(STDOUT)
+    # flush(STDOUT)
 end
 
 # @save "kwang98-testing.jld2" avg
-writedlm("/lustre/kwang98/Koffel_binder_cumulant_corrected_$(N)_$(m)_0:0.1:1.5_$(κ)_$(M).txt", (avg,err))
+# writedlm("/lustre/kwang98/Koffel_binder_cumulant_corrected_$(N)_$(m)_0:0.1:1.5_$(κ)_$(M)_$(steps).txt", (avg,err))
