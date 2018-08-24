@@ -1,6 +1,6 @@
 # Stochastic Series Expansion (SSE) Quantum Monte Carlo (QMC) simulation for the
 # T = 0 Transverse-Field Ising Model (TFIM)
-# using JLD2, FileIO
+# Operator legend: (-1, i) = off diagonal, (0, i) = diagonal site, (i, j) = bond
 
 mutable struct Vertex
     position::Int # p propagation position in imaginary time
@@ -91,9 +91,8 @@ end
 
 function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array{Float64,2}, N::Int, m::Int, P_c1::Array{Float64,1}, P_c2::Array{Float64,2}, s::Int)
     α = deepcopy(α_l)
-
     last_vertex = Array{Vertex}(N)
-    for site in 1:N
+    for site in 1:N # Initiate clusters at left state
         last_vertex[site] = Vertex(0, 2, site, [null_vertex, null_vertex, null_vertex, null_vertex])
     end
 
@@ -121,16 +120,9 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
                 j = searchsortedfirst(P_c2[i,:], rand())
 
                 if (i == j) # Adding diagonal site operator
-                    # if rand(Bool)
-                        operators[p] = (0, i)
-                        n_diagonal += 1
-                        break
-                    # else
-                    #     operators[p] = (-1, i)
-                    #     α[i] = !α[i]
-                    #     n_off_diagonal += 1
-                    #     break
-                    # end
+                    operators[p] = (0, i)
+                    n_diagonal += 1
+                    break
                 else
                     if (J[i,j] > 0) && (α[i] == !α[j]) # Antiferromagnetic bond operator
                         # if (i - j) % 2 == 1
@@ -185,13 +177,17 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
             last_vertex[site1] = vertex
             last_vertex[site2] = vertex
         end
-
-        if p == m # Middle of imaginary time propagation samples ground state
-            middle_state = deepcopy(α)
-        end
     end
 
     updateClusters!(α_l, operators, vertex_list, leg_set) # Off-diagonal updates
+
+    middle_state = deepcopy(α_l)
+    for p in 1:m
+        if operators[p][1] == -1
+            site = operators[p][2]
+            middle_state[site] = !middle_state[site]
+        end
+    end
 
     # Measuring <Z_(N/2) * Z_i> correlators
     if middle_state[N >> 1]
@@ -214,9 +210,16 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
             spin = -1
         end
 
-    	if site % 2 == 1 # Anti-ferromagnet
-    	    spin *= -1
-    	end
+    	# if site % 2 == 1 # 1D Anti-ferromagnet
+    	#     spin *= -1
+    	# end
+
+        L = sqrt(N)
+        coord = ((site - 1) % L + 1, div(site - 1, L) + 1)
+        if ((coord[1] + coord[2]) % 2 == 1) # 2D Anti-ferromagnet
+            spin *= -1
+        end
+
     	magnetization += spin
     end
     magnetization /= N
@@ -225,62 +228,73 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
     # return spin1, spin2
 end
 
-# function check_validity()
-#     α = deepcopy(α_l)
-#     for p in 1:2m
-#         if operators[p][1] == -1
-#             site = operators[p][2]
-#             α[site] = !α[site] # flip operator
-#         elseif operators[p][1] > 0
-#             site1 = operators[p][1]
-#             site2 = operators[p][2]
-#
-#             if (J[site1, site2] > 0) && (α[site1] == α[site2])
-#                 α1 = α[site1]
-#                 α2 = α[site2]
-#                 error("($p) AF Bond ($site1, $site2) is acting on same spin ($α1, $α2)")
-#             elseif (J[site1, site2] < 0) && (α[site1] != α[site2])
-#                 α1 = α[site1]
-#                 α2 = α[site2]
-#                 error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($α1, $α2)")
-#             elseif (J[site1, site2] == 0)
-#                 α1 = α[site1]
-#                 α2 = α[site2]
-#                 error("($p) Bond ($site1, $site2) exists on non-interacting spins ($α1, $α2)")
-#             end
-#         end
-#     end
-# end
+function check_validity()
+    α = deepcopy(α_l)
+    for p in 1:2m
+        if operators[p][1] == -1
+            site = operators[p][2]
+            α[site] = !α[site] # flip operator
+        elseif operators[p][1] > 0
+            site1 = operators[p][1]
+            site2 = operators[p][2]
+
+            if (J[site1, site2] > 0) && (α[site1] == α[site2])
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) AF Bond ($site1, $site2) is acting on same spin ($α1, $α2)")
+            elseif (J[site1, site2] < 0) && (α[site1] != α[site2])
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) Ferro Bond ($site1, $site2) is not acting on same spin ($α1, $α2)")
+            elseif (J[site1, site2] == 0)
+                α1 = α[site1]
+                α2 = α[site2]
+                error("($p) Bond ($site1, $site2) exists on non-interacting spins ($α1, $α2)")
+            end
+        end
+    end
+end
 
 steps = 100000
 delay = steps/2
 
-N = 8
-m = 200
+L = 20
+N = 20
+m = 1000
 
 
-# θ = 1.5
+θ = 0.8
 κ = 2
-
-
-
 
 
 avg = Float64[]
 err = Float64[]
-M = 5
+M = 5 
 
-# println("N = $N, m = $m, θ = 0:0.1:1.5, κ = $κ, M = $M")
-# for i in ((N >> 1) + 1):N
+# println("N = $N, m = $m, θ = 0.0:0.1:1.5, κ = $κ, M = $M, steps = $(steps)")
+# for site in ((N >> 1) + 1):N
 # while m < 100000
 for θ in 0.0:0.1:1.5
     println("Calculating binder cumulant at θ = $θ")
     # println("Testing convergence at m = $m")
-    # println("Correlator of site $N/2 with site $i")
+    # println("Correlator of site $(N/2) with site $site")
+    # J = zeros(Float64, N, N)
+    # for i in 1:N
+    #     for j in i + 1:N
+    #         J[i,j] = sin(θ) * (0.5/abs(i - j)^κ)
+    #         J[j,i] = J[i,j]
+    #     end
+    # end
+    # h = ones(Float64, N)
+    # h *= cos(θ)
+
     J = zeros(Float64, N, N)
     for i in 1:N
+        coord_i = ((i - 1) % L + 1, div(i - 1, L) + 1)
         for j in i + 1:N
-            J[i,j] = sin(θ) * (1.0/abs(i - j)^κ)
+            coord_j = ((j - 1) % L + 1, div(j - 1, L) + 1)
+            distance = sqrt((coord_i[1] - coord_j[1])^2 + (coord_i[2] - coord_j[2])^2)
+            J[i,j] = sin(θ) * (0.5/distance^κ)
             J[j,i] = J[i,j]
         end
     end
@@ -289,10 +303,11 @@ for θ in 0.0:0.1:1.5
 
     P_c1, P_c2 = initializeProbabilityTables(J, h, N)
 
-    time_series = zeros(M, steps)
-    states = Array{BitArray, 2}(M, steps)
-    n_operators = Array{Tuple{Int, Int, Int}, 2}(M, steps)
-    temp = zeros(M,2)
+    # time_series = zeros(M, steps)
+    # states = Array{BitArray, 2}(M, steps)
+    # n_operators = Array{Tuple{Int, Int, Int}, 2}(M, steps)
+
+    temp = zeros(M,3)
     # correlators = zeros(M)
     binder_cumulant = zeros(M)
     for j in 1:M
@@ -300,40 +315,53 @@ for θ in 0.0:0.1:1.5
 
         α_l = BitArray(rand(Bool,N))
         for i in 1:N
-            α_l[i] = (i % 2 == 0)
+            # α_l[i] = (i % 2 == 0) # 1D Neel order
+
+            coord_i = ((i - 1) % L + 1, div(i - 1, L) + 1) # 2D Neel order
+            α_l[i] = ((coord_i[1] + coord_i[2]) % 2 == 0)
         end
         operators = Array{Tuple{Int, Int}}(2m)
         fill!(operators, (0,1))
+
         tic()
         for k in 1:steps
-            # spin1, spin2 = update!(α_l, operators, J, N, m, P_c1, P_c2, 501)
+            # spin1, spin2 = update!(α_l, operators, J, N, m, P_c1, P_c2, site)
 	        magnetization, state, n_diagonal, n_off_diagonal, n_bond = update!(α_l, operators, J, N, m, P_c1, P_c2, 1)
-            time_series[j,k] = magnetization
-            states[j,k] = state
-            n_operators[j,k] = (n_diagonal, n_off_diagonal, n_bond)
+
+            # time_series[j,k] = magnetization
+            # states[j,k] = state
+            # n_operators[j,k] = (n_diagonal, n_off_diagonal, n_bond)
             # check_validity()
             if (k > delay)
                 # temp[j,1] += spin1 * spin2
                 # temp[j,2] += spin1
                 # temp[j,3] += spin2
+
 		        temp[j,1] += magnetization^2
 		        temp[j,2] += magnetization^4
             end
         end
         toc()
         temp[j,:] /= (steps - delay)
+
         # correlators[j] = temp[j,1] - (temp[j,2] * temp[j,3])
         # println(correlators[j])
-        # println(temp[j,2])
-        # println(temp[j,1])
+
     	binder_cumulant[j] = 1 - (temp[j,2])/(3 * (temp[j,1])^2)
     	println(binder_cumulant[j])
+
     	# flush(STDOUT)
     end
     push!(avg, mean(binder_cumulant))
     push!(err, std(binder_cumulant)/sqrt(M))
     println(mean(binder_cumulant))
     println(std(binder_cumulant)/sqrt(M))
+
+    # push!(avg, mean(correlators))
+    # push!(err, std(correlators)/sqrt(M))
+    # println(mean(correlators))
+    # println(std(correlators)/sqrt(M))
+
     # m *= 2
     # flush(STDOUT)
 end

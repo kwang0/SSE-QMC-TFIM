@@ -1,6 +1,7 @@
 # Stochastic Series Expansion (SSE) Quantum Monte Carlo (QMC) simulation for the
 # finite T Transverse-Field Ising Model (TFIM)
-using Plots
+# Operator legend: (0, 0) = null, (-1, i) = off diagonal, (0, i) = diagonal site, (i, j) = bond
+# using Plots
 
 mutable struct Vertex
     position::Int # p propagation position in imaginary time
@@ -116,7 +117,7 @@ function update!(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J::Array
     # Propagate alpha forward in imaginary time
     for p in 1:L
         # Local/diagonal updates
-        if operators[p][1] == -1
+        if operators[p][1] == -1 # Off diagonal operator
             site = operators[p][2]
             α[site] = !α[site] # flip operator
         elseif operators[p][2] == 0 # Null operator
@@ -248,9 +249,9 @@ function check_validity(α_l::BitArray{1}, operators::Array{Tuple{Int,Int},1}, J
 end
 
 steps = 10000
-delay = steps/5
+delay = steps/2
 
-N = 128
+N = 512
 β = 0.0
 
 J = zeros(Float64, N, N)
@@ -267,9 +268,9 @@ P_c1, P_c2, M_sum = initializeProbabilityTables(J, h, N)
 
 avg = Float64[]
 err = Float64[]
-M = 50
+M = 20
 
-for T in 0.5:0.1:5.0
+for T in 0.5:0.01:5.0
     println("T/J = $T")
     β = 1.0/T
     temp = zeros(M)

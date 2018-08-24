@@ -3,6 +3,7 @@ Z1 = [1.0 0.0; 0.0 -1.0]
 I1 = [1.0 0.0; 0.0 1.0]
 ZERO = [0.0 0.0; 0.0 0.0]
 
+L = 3
 N = 8
 κ = 2
 
@@ -20,7 +21,15 @@ for i in 1:N
 end
 M /= N
 
+temp = deepcopy(I_list)
+temp[N >> 1] = Z1
+Z_half = sparse(kron(temp...))
+
 binder = Float64[]
+corr = Float64[]
+
+θ = 0.1
+
 
 for θ in 0.0:0.1:1.5
     J = zeros(Float64, N, N)
@@ -32,6 +41,19 @@ for θ in 0.0:0.1:1.5
     end
     h = ones(Float64, N)
     h *= cos(θ)
+
+    # J = zeros(Float64, N, N)
+    # for i in 1:N
+    #     coord_i = ((i - 1) % L + 1, div(i - 1, L) + 1)
+    #     for j in i + 1:N
+    #         coord_j = ((j - 1) % L + 1, div(j - 1, L) + 1)
+    #         distance = sqrt((coord_i[1] - coord_j[1])^2 + (coord_i[2] - coord_j[2])^2)
+    #         J[i,j] = sin(θ) * (0.5/distance^κ)
+    #         J[j,i] = J[i,j]
+    #     end
+    # end
+    # h = ones(Float64, N)
+    # h *= cos(θ)
 
     H = sparse(kron(ZERO_list...))
     for i in 1:N
@@ -49,22 +71,11 @@ for θ in 0.0:0.1:1.5
     evals,evec = eigs(H, nev=1, which=:SR)
 
     push!(binder, 1 - ((evec' * M^4 * evec)[1])/(3 * ((evec' * M^2 * evec)[1])^2))
+
+    # for site in ((N >> 1) + 1):N
+    #     temp = deepcopy(I_list)
+    #     temp[site] = Z1
+    #     Z_i = sparse(kron(temp...))
+    #     push!(corr, (evec' * Z_half * Z_i * evec)[1] - ((evec' * Z_half * evec)[1] * (evec' * Z_i * evec)[1]))
+    # end
 end
-
-# evals,evec = eig(Hermitian(Matrix(H)))
-
-
-
-# exact = Array{Any}(N - 1)
-# temp = deepcopy(I_list)
-# temp[1] = Z1
-# temp[2] = Z1
-# op = sparse(kron(temp...))
-# exact[1] = (evec' * op  * evec)[1]
-#
-# for i in 3:N
-#     temp[i-1] = I1
-#     temp[i] = Z1
-#     op = sparse(kron(temp...))
-#     exact[i - 1] = (evec' * op  * evec)[1]
-# end
